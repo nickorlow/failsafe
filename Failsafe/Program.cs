@@ -1,10 +1,13 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Discord;
 using Discord.Commands;
 using Discord.WebSocket;
-using Newtonsoft.Json;
+using LiteDB;
 using JsonSerializer = System.Text.Json.JsonSerializer;
 
 namespace Failsafe
@@ -12,6 +15,7 @@ namespace Failsafe
     public class Program
     {
         private DiscordSocketClient _client;
+      
         
         public static void Main(string[] args)
             => new Program().MainAsync().GetAwaiter().GetResult();
@@ -21,6 +25,8 @@ namespace Failsafe
         /// </summary>
         private async Task MainAsync()
         {
+            DatabaseService.Initialize();
+            
             _client = new DiscordSocketClient();
             _client.Log += Log;
 
@@ -37,7 +43,13 @@ namespace Failsafe
             var commandHandler = new CommandHandler(_client, commandService);
             await commandHandler.InstallCommandsAsync();
 
-            _client.SetGameAsync("Safe from Failing!");
+            
+            _client.Connected += () =>
+            {
+                return AlertService.ExecuteAsync(new CancellationToken(), _client);
+            };
+            
+            _client.SetActivityAsync(new Game("Failing Safely"));
             await Task.Delay(-1);
         }
         
@@ -48,98 +60,7 @@ namespace Failsafe
         }
     }
  
-    [Group("fs")]
-    public class SampleModule : ModuleBase<SocketCommandContext>
-    {
-        [Command("add")]
-        [Summary("Adds an assignment")]
-        public async Task SquareAsync(
-            [Summary("The date the assignment is due mmddyyyy")] string date, 
-            [Summary("The code for the class e.g. CS314")] string courseCode, 
-            [Summary("The name of the assignment")] string name)
-        {
-            try
-            {
-                if (!int.TryParse(date, out int none)) {
-                    await Context.Message.ReplyAsync($"Invalid Date!");
-                    return;
-                }
-                
-                DateTime dueDate = new DateTime(int.Parse(date.Substring(4,4)),int.Parse(date.Substring(0,2)), int.Parse(date.Substring(2,2)));
-                DateTime currentDate = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("America/Chicago"));
-                   
-                if (dueDate < currentDate)
-                {
-                    await Context.Message.ReplyAsync($"Assignment was already due!");
-                    return;
-                }
-                
-                EmbedBuilder builder = new();
-
-                builder.WithTitle("Successfully added Assignment");
-                builder.WithDescription("You will be reminded 1 week, 3 days, and one day before the assignment is due");
-                builder.AddField(courseCode, "Course", false); 
-                builder.AddField(name, "Assignment Name");
-                builder.AddField(dueDate.ToShortDateString(), "Due Date");
-                builder.WithColor(Color.Blue);
-
-                await Context.Message.ReplyAsync($"", false, builder.Build());
-            }
-            catch (Exception ex)
-            {
-                await ErrorReporter.ReportErrorAsync(ex, Context);
-            }
-        }
-
-        
-        [Command("addcourse")]
-        [Summary("Adds a class ")]
-        public async Task UserInfoAsync(string courseName, SocketRole courseRole)
-        {
-            try
-            {
-                courseName = courseName.ToUpper();
-                EmbedBuilder builder = new();
-
-                builder.WithTitle($"Created Course {courseName}");
-                builder.WithDescription("Failsafe bot keeps you from failing your classes.");
-                builder.AddField($"@{courseRole.Name}", "Course Role", false); // true - for inline
-
-                builder.WithColor(Color.Blue);
-
-                await Context.Message.ReplyAsync("", false, builder.Build());
-            }
-            catch (Exception ex)
-            {
-                await ErrorReporter.ReportErrorAsync(ex, Context);
-            }
-        }
-        
-        [Command("help")]
-        [Summary("Returns usage information about this bot")]
-        public async Task SendHelpAsync()
-        {
-            try
-            {
-                EmbedBuilder builder = new();
-
-                builder.WithTitle("Help for Failsafe Bot");
-                builder.WithDescription("Failsafe bot keeps you from failing your classes.");
-                builder.AddField("/fs help", "shows this screen", false); // true - for inline
-                builder.AddField("/fs add [date (mmddyyyy)] [course code] [assignment name]", "adds an assignment", false);
-                builder.AddField("/fs addcource [course code] [course role]", "adds a course", false);
-                builder.AddField("/fs upcoming", "shows your upcoming assignment deadlines", false);
-
-                builder.WithColor(Color.Blue);
-
-                await Context.Message.ReplyAsync("", false, builder.Build());
-            }
-            catch (Exception ex)
-            {
-                await ErrorReporter.ReportErrorAsync(ex, Context);
-            }
-        }
-    }
+   
     
     // Code below was mostly taken from documentation
     public class CommandHandler
@@ -189,11 +110,9 @@ namespace Failsafe
                     argPos: argPos,
                     services: null);
 
-
-
-                if (!result.IsSuccess)
-                    throw new Exception("Unknown Error");
-
+                
+                if (!result.IsSuccess && result.Error != CommandError.UnknownCommand)
+                    throw new Exception($"Unknown Error: {result.ErrorReason} (Code {result.Error})");
             }
             catch (Exception ex)
             {

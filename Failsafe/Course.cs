@@ -1,10 +1,13 @@
+using LiteDB;
+
 namespace Failsafe
 {
     public class Course
     {
         public string CourseCode { get; set; }
-        public long CourseRole { get; set; }
-        public long GuildId { get; set; }
-        public string Id => CourseCode + GuildId;
+        public ulong CourseRole { get; set; }
+        public ulong GuildId { get; set; }
+        
+        public ObjectId Id { get; set; }
     }
 }
